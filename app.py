@@ -37,9 +37,22 @@ users_container = client.get_database_client(database_name).get_container_client
 passwords_container_name = 'passwords'
 passwords_container = client.get_database_client(database_name).get_container_client(passwords_container_name)
 
+@app.route('/get_user_id_table', methods=['GET'])
+def get_user_id_table():
+    query = "SELECT * FROM c"
+    try:
+        items = list(users_container.query_items(
+            query=query,
+            enable_cross_partition_query=True
+        ))
+        return jsonify(items), 200
+    except exceptions.CosmosHttpResponseError as e:
+        return jsonify({"error": str(e)}), 500
+
 
 @app.route('/get_accounts', methods=['POST'])
 def get_accounts():
+    # Receives an account name and a hashed password from the client
     account_name = request.json.get('account_name')
     hashed_password = request.json.get('hashed_password')
     
@@ -91,6 +104,7 @@ def get_accounts():
 
 @app.route('/sync', methods=['POST'])
 def sync():
+    # Receives the data and user_id from the client
     data = request.json.get('data')
     user_id = request.json.get('user_id')
 
