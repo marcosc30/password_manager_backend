@@ -37,18 +37,86 @@ users_container = client.get_database_client(database_name).get_container_client
 passwords_container_name = 'passwords'
 passwords_container = client.get_database_client(database_name).get_container_client(passwords_container_name)
 
-@app.route('/get_user_id_table', methods=['GET'])
-def get_user_id_table():
-    query = "SELECT * FROM c"
+@app.route('/get_user_id', methods=['GET'])
+def get_user_id():
+    account_name = request.json.get('account_name')
+    
+    if not account_name:
+        return jsonify({"error": "Account name is required"}), 400
+    
+    # Retrieve user_id, salt, and kdf_salt from the Users Table
+    query = "SELECT * FROM c WHERE c.account=@account_name"
+    parameters = [{"name": "@account_name", "value": account_name}]
+
     try:
-        items = list(users_container.query_items(
+        user_items = list(users_container.query_items(
             query=query,
+            parameters=parameters,
             enable_cross_partition_query=True
         ))
-        return jsonify(items), 200
+
+        if not user_items:
+            # We get the admin account and send that
+            query = "SELECT * FROM c WHERE c.account=@account_name"
+            parameters = [{"name": "@account_name", "value": "admin"}]
+            user_items = list(users_container.query_items(
+                query=query,
+                parameters=parameters,
+                enable_cross_partition_query=True
+            ))
+
+            if not user_items:
+                return jsonify({"error": "Account not found"}), 404
+
+        user_item = user_items[0]  # Assuming account_name is unique
+        user_id = user_item['user_id']
+        salt = user_item['salt']
+        kdf_salt = user_item['kdf_salt']
+
+        return jsonify({"user_id": user_id, "salt": salt, "kdf_salt": kdf_salt}), 200
+
     except exceptions.CosmosHttpResponseError as e:
         return jsonify({"error": str(e)}), 500
+    
+@app.route('/register_user', methods=['POST'])
+def register_user():
+    account_name = request.json.get('account_name')
+    hashed_master_password = request.json.get('hashed_master_password')
+    salt = request.json.get('salt')
+    kdf_salt = request.json.get('kdf_salt')
+    
+    if not account_name or not hashed_master_password or not salt or not kdf_salt:
+        return jsonify({"error": "Account name, hashed password, salt, and kdf_salt are required"}), 400
 
+    # Check if the account name already exists
+    query = "SELECT * FROM c WHERE c.account=@account_name"
+    parameters = [{"name": "@account_name", "value": account_name}]
+
+    try:
+        user_items = list(users_container.query_items(
+            query=query,
+            parameters=parameters,
+            enable_cross_partition_query=True
+        ))
+
+        if user_items:
+            return jsonify({"error": "Account name already exists"}), 409
+
+        # Insert the new user into the Users Table
+        user_item = {
+            "account": account_name,
+            "hashed_master_password": hashed_master_password,
+            "salt": salt,
+            "kdf_salt": kdf_salt,
+            "open_instances": 0
+        }
+
+        users_container.create_item(body=user_item)
+
+        return jsonify({"message": "User registered successfully"}), 201
+
+    except exceptions.CosmosHttpResponseError as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/get_accounts', methods=['POST'])
 def get_accounts():
